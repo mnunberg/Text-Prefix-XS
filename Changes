@@ -1,0 +1,7 @@
+Revision history for Text-Prefix-XS
+
+0.02-TRIAL  Dec 21 2011
+        Fixed documentation bug, also included XS.xs in MANIFEST
+
+0.01    Date/time
+        First version, released on an unsuspecting world.

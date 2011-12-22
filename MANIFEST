@@ -1,0 +1,9 @@
+Changes
+MANIFEST
+Makefile.PL
+README
+lib/Text/Prefix/XS.pm
+t/00-all.t
+t/01-synopsis.t
+trie.pl
+XS.xs
