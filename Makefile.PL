@@ -15,8 +15,10 @@ WriteMakefile(
         'Test::More' => 0,
         'Digest::SHA1' => 1,
         'XSLoader'  => 0,
-        'Test::Deep'=> 0.108
+        'Test::Deep'=> 0.108,
     },
+    #LIBS                => ['-lprofiler'],
+    OPTIMIZE            => '-O3 -ggdb3',
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
     clean               => { FILES => 'Text-Prefix-XS-*' },
 );

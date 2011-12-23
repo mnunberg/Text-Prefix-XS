@@ -5,5 +5,9 @@ README
 lib/Text/Prefix/XS.pm
 t/00-all.t
 t/01-synopsis.t
+
+t/re2_test.pm
+t/txs_gendata.pm
+
 trie.pl
 XS.xs

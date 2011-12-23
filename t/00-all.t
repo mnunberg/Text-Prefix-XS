@@ -67,4 +67,14 @@ if(!$they_match) {
     print Dumper(\@strings);
 }
 
+my $match_hash = prefix_search_multi($xs_search, @strings);
+%xs_seen_hash = ();
+$xs_matches = 0;
+
+while (my ($pfix,$matches) = each %$match_hash) {
+    $xs_seen_hash{$pfix} = scalar @$matches;
+    $xs_matches++;
+}
+is($xs_matches, $re_matches, "Got expected number of matches from multi()");
+
 done_testing();

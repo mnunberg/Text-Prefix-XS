@@ -1,5 +1,9 @@
 Revision history for Text-Prefix-XS
 
+0.08    Dec 23 2011
+        Stabler and quicker algo, used PERL_NO_GET_CONTEXT.
+        Posted some nice performance numbers
+
 0.02-TRIAL  Dec 21 2011
         Fixed documentation bug, also included XS.xs in MANIFEST
 
