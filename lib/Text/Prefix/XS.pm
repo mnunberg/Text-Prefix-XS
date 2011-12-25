@@ -3,16 +3,35 @@ use XSLoader;
 use strict;
 use warnings;
 
-our $VERSION = '0.09';
+our ($VERSION, @ISA);
+$VERSION = '0.10';
 
-XSLoader::load __PACKAGE__, $VERSION;
+BEGIN {
+ $VERSION = '0.10';
+ require DynaLoader;
+ push @ISA, 'DynaLoader';
+ __PACKAGE__->bootstrap($VERSION);
+}
+
 use base qw(Exporter);
+
 our @EXPORT = qw(
     prefix_search_build
     prefix_search_create
     prefix_search
-    prefix_search_multi);
-1;
+    prefix_search_multi
+);
+
+#sub import {
+#    #Sub::Op::enable(psearch => scalar caller);
+#    goto &Exporter::import;
+#}
+#
+#sub unimport {
+#    #Sub::Op::disable(psearch => scalar caller);
+#    goto &Exporter::unimport;
+#}
+#
 
 sub prefix_search_create(@)
 {
@@ -20,6 +39,9 @@ sub prefix_search_create(@)
     @copy = sort { length $b <=> length $a || $a cmp $b } @copy;
     return prefix_search_build(\@copy);
 }
+
+
+"MOVE EVERY ZIG!!!";
 
 __END__
 
@@ -30,10 +52,11 @@ Text::Prefix::XS - Fast prefix searching
 =head1 SYNOPSIS
 
     use Text::Prefix::XS;
+    
     my @haystacks = qw(
         garbage
         blarrgh
-        FOO
+        FOO-stuff
         meh
         AA-ggrr
         AB-hi!
@@ -53,17 +76,24 @@ Text::Prefix::XS - Fast prefix searching
     
     $seen_hash{'FOO'} == 1;
     
-    #Compare to:
-    my $re = join('|', map quotemeta $_, @prefixes);
-    $re = qr/^($re)/;
-    
-    foreach my $haystack (@haystacks) {
-        my ($match) = ($haystack =~ $re);
-        if($match) {
-            $seen_hash{$match}++;
+    {
+        %seen_hash = ();
+        my $re = join('|', map quotemeta $_, @prefixes);
+        $re = qr/^($re)/;
+        
+        foreach my $haystack (@haystacks) {
+            my ($match) = ($haystack =~ $re);
+            if($match) {
+                $seen_hash{$match}++;
+            }
         }
+        $seen_hash{'FOO'} == 1;
     }
-    $seen_hash{'FOO'} == 1;
+    
+    #Super fast:
+    
+    my $match_results = prefix_search_multi($search, @haystacks);
+    grep $_ eq 'FOO-stuff', @{ $match_results->{FOO} };
 
 =head1 DESCRIPTION
 
@@ -91,11 +121,17 @@ being first.
 
 It will then construct a search trie using a variety of caching and lookup layers.
 
+Each prefix must be no longer than 256 I<bytes>. For normal ASCII strings, this
+should be the number of characters - but does not hold true for encodings like
+UTF8.
+
 =head2 prefix_search($thingy, $haystack)
 
 Will check C<$haystack> for any of the prefixes in C<@prefixes> passed to
 L</prefix_search_create>. If C<$haystack> has a prefix, it will be returned by
-this function; otherwise, the return value is C<undef>
+this function; otherwise, the return value is C<undef>.
+
+Input strings can be text or random byte sequences (any is acceptable)
 
 =head2 prefix_search_multi($thingy, @haystacks)
 
@@ -113,7 +149,6 @@ method).
 However, it will not gain a lot of performance benefit with optimistic searching
 (meaning that a match has a good chance of being found), and will just consume
 more memory (since it needs to store the results in a hash).
-
 
 
 =head1 PERFORMANCE
@@ -175,10 +210,6 @@ A few methods were benchmarked, and are listed as keys:
 
 =over
 
-=item C<Perl-Trie>
-
-A generic implementation of a search trie in pure perl
-
 =item C<TMFA>
 
 L<Text::Match::FastAlternatives> C<match_at> function
@@ -195,81 +226,85 @@ Same as C<perl-re>, except using L<re::engine::RE2>
 
 =item C<TXS>
 
-This module.
+Using a loop of L</prefix_search> over the input items
+
+=item C<TXS-Multi>
+
+Using a single function call to L</prefix_search_multi>
 
 =back
 
 
     Generated INPUT=2000000 TERMS=20 TERM_MIN=3 TERM_MAX=6
     CAP   NAME       DUR	MATCH
-    [Y] Perl-Trie  	2.42s	M=34768
-    [N] TMFA       	1.11s	M=34768
-    [N] perl-re    	1.27s	M=34768
-    [N] RE2        	0.96s	M=34768
-    [Y] perl-re    	1.45s	M=34768
-    [Y] RE2        	2.95s	M=34768
-    [Y] TXS        	0.53s	M=34768
+    [N] TMFA       	1.12s	M=23578
+    [N] perl-re    	1.24s	M=23578
+    [N] RE2        	0.91s	M=23578
+    [Y] perl-re    	1.44s	M=23578
+    [Y] RE2        	2.91s	M=23578
+    [Y] TXS        	0.53s	M=23578
+    [Y] TXS-Multi  	0.18s	M=23578
     
     Generated INPUT=2000000 TERMS=50 TERM_MIN=10 TERM_MAX=16
     CAP   NAME       DUR	MATCH
-    [Y] Perl-Trie  	2.32s	M=50
-    [N] TMFA       	1.07s	M=50
-    [N] perl-re    	1.27s	M=50
-    [N] RE2        	0.93s	M=50
-    [Y] perl-re    	1.47s	M=50
-    [Y] RE2        	1.14s	M=50
-    [Y] TXS        	0.55s	M=50
+    [N] TMFA       	1.14s	M=50
+    [N] perl-re    	1.20s	M=50
+    [N] RE2        	0.90s	M=50
+    [Y] perl-re    	1.43s	M=50
+    [Y] RE2        	1.10s	M=50
+    [Y] TXS        	0.53s	M=50
+    [Y] TXS-Multi  	0.17s	M=50
     
     Generated INPUT=2000000 TERMS=49 TERM_MIN=2 TERM_MAX=16
     CAP   NAME       DUR	MATCH
-    [Y] Perl-Trie  	17.70s	M=420699
-    [N] TMFA       	1.10s	M=420699
-    [N] perl-re    	1.35s	M=420699
-    [N] RE2        	0.97s	M=420699
-    [Y] perl-re    	1.70s	M=420699
-    [Y] RE2        	4.98s	M=420699
-    [Y] TXS        	1.62s	M=420699
+    [N] TMFA       	1.17s	M=339003
+    [N] perl-re    	1.30s	M=339003
+    [N] RE2        	0.93s	M=339003
+    [Y] perl-re    	1.65s	M=339003
+    [Y] RE2        	5.10s	M=339003
+    [Y] TXS        	1.74s	M=339003
+    [Y] TXS-Multi  	1.51s	M=339003
 
 
     Generated INPUT=2000000 TERMS=10 TERM_MIN=5 TERM_MAX=10
     CAP   NAME       DUR	MATCH
-    [Y] Perl-Trie  	1.99s	M=265
-    [N] TMFA       	1.07s	M=265
-    [N] perl-re    	1.20s	M=265
-    [N] RE2        	0.90s	M=265
-    [Y] perl-re    	1.43s	M=265
-    [Y] RE2        	2.70s	M=265
-    [Y] TXS        	0.45s	M=265
+    [N] TMFA       	1.12s	M=131
+    [N] perl-re    	1.27s	M=131
+    [N] RE2        	0.97s	M=131
+    [Y] perl-re    	1.50s	M=131
+    [Y] RE2        	2.76s	M=131
+    [Y] TXS        	0.46s	M=131
+    [Y] TXS-Multi  	0.09s	M=131
 
     Generated INPUT=2000000 TERMS=100 TERM_MIN=3 TERM_MAX=25
     CAP   NAME       DUR	MATCH
-    [Y] Perl-Trie  	10.35s	M=22269
-    [N] TMFA       	1.15s	M=22269
-    [N] perl-re    	1.40s	M=22269
-    [N] RE2        	1.06s	M=22269
-    [Y] perl-re    	1.58s	M=22269
-    [Y] RE2        	2.06s	M=22269
-    [Y] TXS        	1.10s	M=22269
+    [N] TMFA       	1.15s	M=15734
+    [N] perl-re    	1.26s	M=15734
+    [N] RE2        	0.94s	M=15734
+    [Y] perl-re    	1.49s	M=15734
+    [Y] RE2        	1.69s	M=15734
+    [Y] TXS        	1.06s	M=15734
+    [Y] TXS-Multi  	0.68s	M=15734
     
     Generated INPUT=2000000 TERMS=200 TERM_MIN=5 TERM_MAX=25
     CAP   NAME       DUR	MATCH
-    [Y] Perl-Trie  	3.81s	M=1325
-    [N] TMFA       	1.16s	M=1325
-    [N] perl-re    	1.30s	M=1325
-    [N] RE2        	1.07s	M=1325
-    [Y] perl-re    	1.56s	M=1325
-    [Y] RE2        	1.38s	M=1325
-    [Y] TXS        	0.63s	M=1325
+    [N] TMFA       	1.15s	M=1300
+    [N] perl-re    	1.22s	M=1300
+    [N] RE2        	1.00s	M=1300
+    [Y] perl-re    	1.43s	M=1300
+    [Y] RE2        	1.27s	M=1300
+    [Y] TXS        	0.73s	M=1300
+    [Y] TXS-Multi  	0.24s	M=1300
 
     Generated INPUT=2000000 TERMS=8 TERM_MIN=2 TERM_MAX=5
     CAP   NAME       DUR	MATCH
-    [Y] Perl-Trie  	1.79s	M=22168
-    [N] TMFA       	1.15s	M=22168
-    [N] perl-re    	1.26s	M=22168
-    [N] RE2        	1.01s	M=22168
-    [Y] perl-re    	1.56s	M=22168
-    [Y] RE2        	2.48s	M=22168
-    [Y] TXS        	0.49s	M=22168
+    [N] TMFA       	1.12s	M=88025
+    [N] perl-re    	1.22s	M=88025
+    [N] RE2        	0.82s	M=88025
+    [Y] perl-re    	1.64s	M=88025
+    [Y] RE2        	1.13s	M=88025
+    [Y] TXS        	0.63s	M=88025
+    [Y] TXS-Multi  	0.27s	M=88025
 
     
 I've mainly tested this on Debian's 5.10 - for newer perls, this module performs
@@ -297,21 +332,45 @@ L<re::engine::RE2>
 
 =head1 CAVEATS
 
-I have yet to figure out a way to test this properly with threads. Currently
-the trie data structure is stored as a private perl C<HV>, and I'm not sure
-what happens when it's cloned across threads.
+=head2 Threads
 
-This algorithm performs quite poorly when matches are more likely. B<HOWEVER>,
-in the case where there is a desire to extract the matched prefix, the overhead
-in doing so with Regular Expressions outweighs the performance hit of
-C<Text::Prefix::XS>, making C<Text::Prefix::XS> still effectively faster.
+I get funky messages about unbalanced string tables and missing shared string
+entries when using this object in threads. However, I have not experienced a
+segfault with threads, and L<threads> says that weird messages are normal. Still
+a work in process.
 
-Search prefixes and search input is currently restricted to printable ASCII
-characters
+=head2 Optimistic Matching
 
-Search terms may not exceed 256 characters. You can increase this limit
+The performance gains from this algorithm are less when matches are more likely
+(optimistic). Nevertheless, when matches are likely, chances are you want to
+figure out what it was that matched - in which case the performance benefits are
+still reaped - as this is the fastest performing capturing method.
+
+Do not use L</prefix_search_multi> with optimistic matching, as it will provide
+minimal speed boosts and increase your memory usage.
+
+In the future, an interface to provide a function callback would be handy - but
+in the case of optimistic matching, would be bad for performance as well
+
+=head2 Prefix Lengths
+
+Prefixes may not exceed 256 bytes. You can increase this limit
 (at the cost of more memory) by changing the C<#define> of
 C<CHARTABLE_MAX> in the XS code and recompiling.
+
+=head2 UTF-8 Support
+
+Doing some basic tests with C<use utf8;> and non-ascii input, it seems to work
+as expected. The character tables and prefix tries work at the byte level, so
+no conversion is done for you. This is usually not an issue, but I am no unicode
+expert, so nag me if you find something wrong
+
+=head2 Many Prefixes
+
+In the case where the prefix count becomes insanely high (i.e. over 5,000), the 
+performance of this module will begin to drop. This could probably be solved in 
+the future by a bunch of different methods. Even at a 10,000 prefix count, it 
+still remains on-par with perl regular expressions.
 
 =head1 AUTHOR AND COPYRIGHT
 

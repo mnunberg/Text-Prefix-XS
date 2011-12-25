@@ -1,12 +1,15 @@
 #define PERL_NO_GET_CONTEXT
-
 #include "EXTERN.h"
 #include "perl.h"
 #include "XSUB.h"
 
+#ifdef TXS_SUB_OP
+#include "sub_op.h"
+#endif
 
 /*Change this if you care. Note that the memory used is this number
  multiplied by 256 again. The default is 256 * 256 == 65535 */
+
 #define CHARTABLE_MAX 256
 
 #define PRINTABLE_MIN 0x20
@@ -22,18 +25,45 @@
 
 #endif
 
-typedef unsigned char TXS_chartable_t[256];
+typedef unsigned char TXS_chartable_t[256+1];
 
 #define txs_search_from_sv(sv) (struct TXS_Search*)(SvUVX(sv))
 #define terms_from_search(srch) \
     (struct TXS_String*)(((char*)srch) + sizeof(struct TXS_Search))
 
+#define TXS_COUNTERS
 
-#define hashtable_from_search(srch) \
-    (((char*)(terms_from_search(srch))) + \
-        sizeof(struct TXS_String) * srch->term_count)
+#ifdef TXS_COUNTERS
+#define OPTIMIZE_STATS_FIELDS \
+struct { \
+	int opti_lengths; \
+	int opti_chartable; \
+	int opti_hash_firstpass; \
+	int opti_hash_secondpass; \
+	int opti_none; \
+	int opti_8; \
+	int opti_4; \
+	int opti_2; \
+} statistics ;
 
-#define TXS_BUCKETS 1024
+#define txs_inc_counter(srchp, v) \
+    (srchp->statistics.opti_ ## v)++;
+
+#define _txs_dumpstat(srchp, stat) \
+	printf("%s: %d\n", "TXS Optimized: " #stat, srch->statistics.opti_ ## stat);
+
+#define txs_dump_stats(srchp) \
+	_txs_dumpstat(srchp, lengths); _txs_dumpstat(srchp, chartable); \
+	_txs_dumpstat(srchp, hash_firstpass); _txs_dumpstat(srchp, hash_secondpass); \
+	_txs_dumpstat(srch, none);
+#else
+
+#define OPTIMIZE_STATS_FIELDS
+#define txs_inc_counter(a, b)
+#define txs_dump_stats(a)
+
+#endif
+
 
 struct TXS_String {
     int len;
@@ -67,7 +97,6 @@ struct TXS_Search {
 	 each svt_dup, and decreased by one during svt_free*/
 	int refcount;	
 	
-	
 	/*Sparse array for checking the existence of a char in a given position
 	 for any term*/	
     TXS_chartable_t chartable[CHARTABLE_MAX];
@@ -75,17 +104,26 @@ struct TXS_Search {
 	/*Static array of term_lengths_max lengths*/
 	TXS_termlen_t term_lengths[CHARTABLE_MAX];
 	
-	/*Prefix tree*/
+	/*Prefix tree - This is a hash which is checked in the first hash pass,
+	 and its keys are substrings of prefix, all exactly min_len length*/
 	HV *trie;
+	
+	/*Full match index. This contains the actual prefixes in hash
+	 form, and is traversed on the second hash pass*/
+	HV *fullmatch;
 	
 	/*Block of allocated memory for the terms themselves*/
 	char *strlist;
+	
+	
+	/*Optimizations and statistics*/
+	OPTIMIZE_STATS_FIELDS;
 };
 
 static int txs_freehook(pTHX_ SV* mysv, MAGIC* mg);
 static int txs_duphook(pTHX_ MAGIC *mg, CLONE_PARAMS *param);
-static void THX_txs_mg_init(pTHX_ SV *mysv, struct TXS_Search *srch);
-#define txs_mg_init(mysv, srch) THX_txs_mg_init(aTHX_ mysv, srch)
+static void THX_txs_sv_init(pTHX_ SV *mysv, struct TXS_Search *srch);
+#define txs_sv_init(mysv, srch) THX_txs_sv_init(aTHX_ mysv, srch)
 
 static MGVTBL txs_vtbl = {
 	.svt_free = txs_freehook,
@@ -111,6 +149,9 @@ static int _compar(const TXS_termlen_t *i1, const TXS_termlen_t *i2)
  to figure out whether the char table is mostly full of true
  values (bad) or mostly full of false values (good)*/
 
+
+#if 0
+/*We don't seem to need this*/
 static void build_chartable_cost(struct TXS_Search *srch)
 {
 	int i;
@@ -131,8 +172,6 @@ static void build_chartable_cost(struct TXS_Search *srch)
 			if((srch->chartable[i][j]) == 0) {
 				total_false++;
 				pos_false_total++;
-			} else {
-				//warn("Char %c at pos=%d is full", j, i);
 			}
 		}
 		warn("Got %d exclusions for pos=%d", pos_false_total, i);
@@ -144,6 +183,7 @@ static void build_chartable_cost(struct TXS_Search *srch)
 		warn("Wanted %0.2f, got %lu. Middle=%d", min_false, total_false, middle);
 	}
 }
+#endif
 
 #define term_sanity_check(svpp, idx) \
 	if(!svpp) { die("Terms list is partially empty at idx=%d", idx); } \
@@ -173,7 +213,7 @@ static void THX_study_terms(
 		
 		term_s = SvPV(*old_sv, term_len);
 		for(j = 0; j < term_len; j++) {
-			srch->chartable[j][term_s[j]] = 1;
+			srch->chartable[j][(unsigned char)term_s[j]] = 1;
 		}
 		
 		
@@ -190,21 +230,26 @@ static void THX_study_terms(
 		}
 	}
 	
-	
-	
 	/*Sort the lengths list*/
 	qsort(srch->term_lengths, len_idx, sizeof(TXS_termlen_t),
 	  (txs_compar_fn_t)&_compar);
-		
-	if(len_idx > 1) {
-		len_idx--;
-	}
 	
-	srch->term_lengths_max = len_idx+1;
+	len_idx--;
+	
+	srch->term_lengths_max = len_idx;
 	srch->max_len = srch->term_lengths[len_idx];
-	*(int*)&srch->min_len = srch->term_lengths[0];
+	srch->min_len = srch->term_lengths[0];
+	
 	srch->term_count = max;
+	
 	//build_chartable_cost(srch);
+}
+
+
+#define test_cmph(terms) THX_test_cmph(aTHX_ terms)
+static void THX_test_cmph(pTHX_ AV *terms)
+{
+	
 }
 
 #define prefix_search_build(av) THX_prefix_search_build(aTHX_ av);
@@ -229,10 +274,12 @@ SV* THX_prefix_search_build(pTHX_ AV *mortal_av)
 	terms = terms_from_search(srch);
 	
     SV *mysv = newSVuv((UV)srch);
-	txs_mg_init(mysv, srch);
-		
+	
     srch->trie = newHV();
+	srch->fullmatch = newHV();
+	
 	study_terms(srch, mortal_av);
+	
 	
 	for(i = 0; i <= max; i++) {
 		SV **res = av_fetch(mortal_av, i, 0);
@@ -254,44 +301,30 @@ SV* THX_prefix_search_build(pTHX_ AV *mortal_av)
 		strp->len = term_len;
 		strlist_p += (term_len + 1);
 		
-        for(j = term_len; j; j--) {
-            hv_store(srch->trie, term_s, j, &PL_sv_undef, 0);
-        }		
+		hv_store(srch->fullmatch, term_s, term_len, &PL_sv_undef, 0);
+		hv_store(srch->trie, term_s, srch->min_len, &PL_sv_undef, 0);
+		
     }
 	
 	/*Study the chartable, and see if it's worthwhile performing
 	 lookups against it*/
+	txs_sv_init(mysv, srch);
 	return newRV_noinc(mysv);
 }
-
-#define TXS_COUNTERS
-
-#ifdef TXS_COUNTERS
-#define txs_inc_counter(v) \
-    (Optimized ## _ ##v)++;
-#else
-#define txs_inc_counter(v)
-#endif
-
-static int Optimized_8 = 0;
-static int Optimized_4 = 0;
-static int Optimized_2 = 0;
-static int Optimized_chartable = 0;
-static int Optimized_hash_firstpass = 0;
-static int Optimized_hash_secondpass = 0;
-static int Optimized_lengths = 0;
-static int Optimized_none = 0;
 
 #define prefix_search(mysv, input_sv) THX_prefix_search(aTHX_ mysv, input_sv)
 SV* THX_prefix_search(pTHX_ SV* mysv, SV *input_sv)
 {
     register int i = 1, j = 0;
-	SV *ret = &PL_sv_undef;	
+
+	SV *ret = &PL_sv_undef;
+    
     register struct TXS_String *strp;
     register int strp_len;
     STRLEN input_len;
 	
 	register int term_len;
+    int match_len = 0;
 	int can_match = 0;
 	
     char *input = SvPV(input_sv, input_len);
@@ -306,11 +339,9 @@ SV* THX_prefix_search(pTHX_ SV* mysv, SV *input_sv)
 		goto GT_RET;
 	}
 	
-	
-	/*First pass, exclude by ending*/
-	for(i = 0; i < srch->term_lengths_max; i++) {
-		/*For each prefix end position, see if the string contains a
-		 character matching any*/
+    /*FIRST PASS:
+     * Check all prefix lengths, and see if we're eligible for any*/
+	for(i = 0; i <= srch->term_lengths_max; i++) {
 		term_len = srch->term_lengths[i];
 		
 		if(term_len > input_len) {
@@ -318,59 +349,83 @@ SV* THX_prefix_search(pTHX_ SV* mysv, SV *input_sv)
 		}
 		
 		/*We can. Break*/
-		if(srch->chartable[term_len-1][ input[term_len-1] ]) {
+		if(srch->chartable[term_len-1][ (unsigned char)input[term_len-1] ]) {
 			can_match = 1;
 			break;
 		}
 	}
 	
 	if(!can_match) {
-		txs_inc_counter(lengths);
+		txs_inc_counter(srch, lengths);
 		goto GT_RET;
 	}
-	
-	
-	/*At this point, we know we're eligible for a match, judging by the prefix
-	 endings*/
-	
-	/*Second pass, exclude by beginning*/
+
+    /* SECOND PASS:
+     * In our little game of hangman, we know the that we have a last character
+     * for at least one prefix.
+     *
+     * Now, check for non-existent characters in any of the rest of the
+     * prefixes, for the smallest prefix size
+    */
 	for(i = 0; i < srch->min_len; i++) {
-		if(!srch->chartable[i][input[i]]) {
-			txs_inc_counter(chartable);
+		if(!srch->chartable[i][ (unsigned char)input[i] ]) {
+			txs_inc_counter(srch, chartable);
 			goto GT_RET;
 		}
 	}
-	
-	/*Third pass, check by middle*/
-	
-	
-	
-	GT_NO_CHARTABLE:
-	
+
+    /*THIRD PASS:
+     * Check if the sequence up to the minimum prefix length is valid*/
 	if(!hv_exists(srch->trie, input, srch->min_len)) {
-		txs_inc_counter(hash_firstpass);
+		txs_inc_counter(srch, hash_firstpass);
 		goto GT_RET;
 	}
 	
+    /*FOURTH PASS:
+     * Check if we have a valid full prefix. If can_match ends up being true, 
+     * it essentially means we will ALWAYS have a match*/
 	can_match = 0;
-	for(i = 0; i < srch->term_lengths_max; i++) {
+	for(i = 0; i <= srch->term_lengths_max; i++) {
 		term_len = srch->term_lengths[i];
 		if(term_len > input_len) {
+			warn("Too short!");
 			break;
 		}
 		
-		if(hv_exists(srch->trie, input, term_len)) {
+		if(hv_exists(srch->fullmatch, input, term_len)) {
 			can_match = 1;
 			break;
 		}
 	}
 	
 	if(!can_match) {
-		txs_inc_counter(hash_secondpass);
+		txs_inc_counter(srch, hash_secondpass);
 		goto GT_RET;
 	}
-	
-	txs_inc_counter(none);
+
+    match_len = term_len;
+    for(j = srch->term_lengths_max; j > i; j--) {
+        term_len = srch->term_lengths[j];
+        if(term_len > input_len) { 
+            continue;
+        }
+
+        if(hv_exists(srch->fullmatch, input, term_len)) {
+            match_len = term_len;
+            break;
+        }
+    }
+    ret = newSVpv(input, match_len);
+    if(SvUTF8(input_sv)) {
+        SvUTF8_on(ret);
+    }
+    goto GT_RET;
+
+
+    /*The following isn't used*/
+
+#if 0
+	txs_inc_counter(srch, none);
     /*Check against each search term*/
     for(i = 0; i <= srch->term_count; i++) {
         strp = &terms[i];
@@ -381,7 +436,7 @@ SV* THX_prefix_search(pTHX_ SV* mysv, SV *input_sv)
         }
 
         #define bit_cmp_on_fuzzy(l, T) \
-            if(strp_len > 8) { \
+            if(strp_len > l) { \
                 if(!str_bits_cmp(T, input, strp->str)) { continue; } \
                 else { goto GT_CMP; } \
             }
@@ -391,18 +446,19 @@ SV* THX_prefix_search(pTHX_ SV* mysv, SV *input_sv)
         bit_cmp_on_fuzzy(2, int16_t);
 
         GT_CMP:       
-        if(strncmp(input, strp->str, strp_len) == 0) {
+        if(memcmp(input, strp->str, strp_len) == 0) {
 			ret = newSVpv(strp->str, strp_len);
+			if(SvUTF8(input_sv)) {
+				/*If our input was a UTF8 string, and we matched - then the output
+				 should probably be a UTF8 string as well*/
+				SvUTF8_on(ret);
+			}
 			goto GT_RET;
         }
     }
-    
+#endif
+
 	GT_RET:
-	//if(ret != &PL_sv_undef) {
-	//	warn("Found match..");
-	//} else {
-	//	warn("Returning without match");
-	//}
     return ret;        
 }
 
@@ -448,21 +504,37 @@ SV* THX_prefix_search_multi(pTHX_ SV* mysv, AV *input_strings)
 	return newRV_noinc((SV*)ret);
 }
 
-void print_optimized(char* foo)
+#ifdef TXS_SUB_OP
+static OP* TXS_OP_psearch(pTHX)
 {
-    _print_optimized(2);
-    _print_optimized(4);
-    _print_optimized(8);
-    _print_optimized(chartable);
-    _print_optimized(hash_firstpass);
-	_print_optimized(hash_secondpass);
-	_print_optimized(lengths);
-	_print_optimized(none);
+	dXSARGS;
+	SV *input = POPs;
+	SV *mysv = POPs;
+	SV *ret = prefix_search(mysv, input);
+	PUSHs(ret);
+	XSRETURN(1);
+}
+#endif
+
+#define prefix_search_dump(mysv) THX_prefix_search_dump(aTHX_ mysv)
+SV* THX_prefix_search_dump(pTHX_ SV *mysv)
+{
+	if(!SvROK(mysv)) {
+		die("Bad parameter!");
+	}
+	
+	struct TXS_Search *srch = txs_search_from_sv(SvRV(mysv));
+	txs_dump_stats(srch);
+	sv_dump(srch->trie);
+	return &PL_sv_undef;
 }
 
 static int txs_freehook(pTHX_ SV *mysv, MAGIC *mg)
 {
 	struct TXS_Search *srch = (struct TXS_Search*)mg->mg_ptr;
+	if(PL_dirty) {
+		return 0;
+	}
 	
 	if(!srch) {
 		warn("TXS_Search object has already been freed?");
@@ -471,8 +543,10 @@ static int txs_freehook(pTHX_ SV *mysv, MAGIC *mg)
 	
 	srch->refcount--;
 	
+	//warn("srch->refcount: %d", srch->refcount);
+	
 	if(!srch->refcount) {
-		
+		//warn("TXS: Search being destroyed..");
 		SvREFCNT_dec(srch->trie);
 		Safefree(srch->strlist);
 		Safefree(srch);
@@ -484,18 +558,50 @@ static int txs_freehook(pTHX_ SV *mysv, MAGIC *mg)
 static int txs_duphook(pTHX_ MAGIC *mg, CLONE_PARAMS *param)
 {
 	struct TXS_Search *srch = txs_search_from_sv(mg->mg_obj);
+	
 	srch->refcount++;
-
+	
+	//warn("srch->refcount: %d", srch->refcount);
 }
 
-static void THX_txs_mg_init(pTHX_ SV *mysv, struct TXS_Search *srch)
+static void THX_txs_sv_init(pTHX_ SV *mysv, struct TXS_Search *srch)
 {
 	MAGIC *mg = sv_magicext(mysv, mysv,
 				PERL_MAGIC_ext, &txs_vtbl,
 				(char*)srch, 0);
+	srch->refcount = 1;
+	
+	mg->mg_flags |= MGf_DUP;
+	
+	HE *trie_ent;
+	I32 klen;
+	char *key;
+	//hv_iterinit(srch->trie);
+	//
+	//while ( trie_ent = hv_iternext(srch->trie) ) {
+	//	SvSHARE(hv_iterkeysv(trie_ent));
+	//}
+	//
+	//SvSHARE(srch->trie);
+	//SvSHARE(mysv);
 }
 
 MODULE = Text::Prefix::XS	PACKAGE = Text::Prefix::XS
+
+BOOT:
+{
+#ifdef TXS_SUB_OP
+     sub_op_config_t c;
+     c.name    = "psearch";
+     c.namelen = sizeof("psearch")-1;
+     c.pp      = TXS_OP_psearch;
+     c.check   = 0;
+     c.ud      = NULL;
+     sub_op_register(aTHX_ &c);
+#else
+	 ;
+#endif
+}
 
 PROTOTYPES: DISABLE
 
@@ -520,19 +626,5 @@ prefix_search_multi (mysv, input_strings)
 	AV *	input_strings
 	PROTOTYPE: $\@
 
-void
-print_optimized (foo)
-	char *	foo
-	PREINIT:
-	I32* temp;
-	PPCODE:
-	temp = PL_markstack_ptr++;
-	print_optimized(foo);
-	if (PL_markstack_ptr != temp) {
-          /* truly void, because dXSARGS not invoked */
-	  PL_markstack_ptr = temp;
-	  XSRETURN_EMPTY; /* return empty stack */
-        }
-        /* must have used dXSARGS; list context implied */
-	return; /* assume stack size is correct */
-
+SV *prefix_search_dump (mysv)
+	SV *	mysv

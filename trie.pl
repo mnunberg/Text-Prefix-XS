@@ -18,6 +18,7 @@ GetOptions(
     'pp'            => \my $UsePP,
     'xs'            => \my $UseXS,
     'xs_multi'      => \my $UseXS_multi,
+    'xs_op'         => \my $UseXS_OP,
     're'            => \my $UseRE,
     're2'           => \my $UseRE2,
     
@@ -144,6 +145,9 @@ sub search_XS {
             $matches++;
         }
     }
+    if($ENV{TEXT_XS_DUMP}) {
+        Text::Prefix::XS::prefix_search_dump($xs_search);
+    }
     return $matches;
 }
 
@@ -153,13 +157,27 @@ sub search_XS_multi {
     while (my ($pfix,$mch) = each %$match_hash) {
         $matches += scalar @$mch;
     }
+    if($ENV{TEXT_XS_DUMP}) {
+        Text::Prefix::XS::prefix_search_dump($xs_search);
+    }
     return $matches;
 }
 
+sub search_XS_op {
+    my $xs_search = prefix_search_create(@terms);
+    foreach my $str (@strings) {
+        if(my $result = psearch($xs_search,$str)) {
+            $matches++;
+        }
+    }
+}
+
 if(!($UsePP||$UseXS||$UseRE||$UseRE2
-     ||$UseRE2_CAP||$UseRE_CAP||$UseXS_multi)) {
+     ||$UseRE2_CAP||$UseRE_CAP||$UseXS_multi||
+     $UseXS_OP)) {
     $UsePP = 1;
     $UseXS = 1;
+    $UseXS_OP = 1;
     $UseXS_multi = 1;
     $UseRE = 1;
     $UseRE2 = 1;
@@ -175,8 +193,9 @@ eval {
 };
 
 my @fn_maps = (
-    [$UsePP,
-     "[Y] Perl-Trie", \&search_PP],
+    #[$UsePP,
+    # "[Y] Perl-Trie", \&search_PP],
+    
     [$UseTMFA,
      "[N] TMFA", \&search_TMFA],
     [$UseRE,
@@ -188,9 +207,10 @@ my @fn_maps = (
     [$UseRE2_CAP && $can_have_re2,
      '[Y] RE2', sub { re2_test::search_RE2_CAP(\@terms, \@strings) }],
     
-    [$UseXS, "[Y] TXS",
-     \&search_XS],
-     [$UseXS_multi, '[Y] TXS-Multi', \&search_XS_multi]
+    [$UseXS, "[Y] TXS", \&search_XS],
+    [$UseXS_multi, '[Y] TXS-Multi', \&search_XS_multi],
+    
+    #[$UseXS_OP, '[Y] TXS-OP', \&search_XS_op],
 );
 
 printf("%-5s %-10s %3s\t%s\n",
@@ -198,7 +218,7 @@ printf("%-5s %-10s %3s\t%s\n",
 foreach (@fn_maps) {
     my ($enabled,$title,$fn) = @$_;
     if(!$enabled) {
-        log_warnf("Skipping %s", $title);
+        printf("%-15s SKIP\n", $title);
         next;
     }
     $matches = 0;

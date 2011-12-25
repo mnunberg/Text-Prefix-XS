@@ -17,6 +17,8 @@ sub GenData($\[@@]) {
     @$str_ref = map substr(encode_base64(sha1_hex($_)), 0, $max_len+1),
         (0..$string_count);
     
+    print $str_ref->[0] . "\n";
+    
     while (@$term_ref < $term_count) {
         my $str = $str_ref->[int(rand($string_count))];
         my $prefix = substr($str, 0,

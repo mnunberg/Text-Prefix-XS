@@ -2,7 +2,12 @@ use strict;
 use warnings;
 use ExtUtils::MakeMaker;
 
+#use ExtUtils::Depends;
+#
+#my $ed = ExtUtils::Depends->new('Scalar::Util::Ops' => 'Sub::Op');
+
 WriteMakefile(
+    #$ed->get_makefile_vars,
     NAME                => 'Text::Prefix::XS',
     AUTHOR              => q{M. Nunberg <mnunberg@haskaah.org>},
     VERSION_FROM        => 'lib/Text/Prefix/XS.pm',
@@ -14,7 +19,6 @@ WriteMakefile(
     PREREQ_PM => {
         'Test::More' => 0,
         'Digest::SHA1' => 1,
-        'XSLoader'  => 0,
         'Test::Deep'=> 0.108,
     },
     #LIBS                => ['-lprofiler'],

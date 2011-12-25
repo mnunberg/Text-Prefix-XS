@@ -3,18 +3,19 @@ use strict;
 use warnings;
 use Test::More;
 use Text::Prefix::XS;
+
 my @haystacks = qw(
     garbage
     blarrgh
-    FOO
+    FOO-stuff
     meh
     AA-ggrr
     AB-hi!
 );
 
-my @needles = qw(AAA AB FOO FOO-BAR);
+my @prefixes = qw(AAA AB FOO FOO-BAR);
 
-my $search = prefix_search_create( map uc($_), @needles );
+my $search = prefix_search_create( map uc($_), @prefixes );
 
 my %seen_hash;
 
@@ -24,17 +25,23 @@ foreach my $haystack (@haystacks) {
     }
 }
 
-ok($seen_hash{'FOO'} == 1, 'XS Example');
+ok($seen_hash{'FOO'} == 1);
 
-#Compare to:
-my $re = join('|', map quotemeta $_, @needles);
-$re = qr/^($re)/;
 %seen_hash = ();
+#Compare to:
+my $re = join('|', map quotemeta $_, @prefixes);
+$re = qr/^($re)/;
+
 foreach my $haystack (@haystacks) {
     my ($match) = ($haystack =~ $re);
     if($match) {
         $seen_hash{$match}++;
     }
 }
-ok($seen_hash{'FOO'} == 1, 'RE Example');
+ok($seen_hash{'FOO'} == 1);
+
+#Super fast:
+
+my $match_results = prefix_search_multi($search, @haystacks);
+ok(grep $_ eq 'FOO-stuff', @{ $match_results->{FOO} });
 done_testing();
