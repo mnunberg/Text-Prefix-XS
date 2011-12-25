@@ -1,4 +1,10 @@
 Revision history for Text-Prefix-XS
+0.11    Dec 25 2011
+        Free memory for extra hash
+        Fixed indentation for XS code
+
+0.10    Dec 24 2011
+        Enhanced performance for many prefixex
 
 0.08    Dec 23 2011
         Stabler and quicker algo, used PERL_NO_GET_CONTEXT.

@@ -4,10 +4,9 @@ use strict;
 use warnings;
 
 our ($VERSION, @ISA);
-$VERSION = '0.10';
 
 BEGIN {
- $VERSION = '0.10';
+ $VERSION = '0.11';
  require DynaLoader;
  push @ISA, 'DynaLoader';
  __PACKAGE__->bootstrap($VERSION);
