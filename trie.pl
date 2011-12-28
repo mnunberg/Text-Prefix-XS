@@ -139,7 +139,12 @@ sub search_TMFA {
 }
 
 sub search_XS {
+    my $xs_begin_time = time();
     my $xs_search = prefix_search_create(@terms);
+    my $xs_duration = time() - $xs_begin_time;
+    if($ENV{TEXT_XS_DUMP}) {
+        printf("Creating search took %0.3f sec\n", $xs_duration);
+    }
     foreach my $str (@strings) {
         if(my $result = prefix_search $xs_search, $str) {
             $matches++;
@@ -215,18 +220,25 @@ my @fn_maps = (
 
 printf("%-5s %-10s %3s\t%s\n",
        'CAP', 'NAME', 'DUR', 'MATCH');
-foreach (@fn_maps) {
-    my ($enabled,$title,$fn) = @$_;
-    if(!$enabled) {
-        printf("%-15s SKIP\n", $title);
-        next;
-    }
-    $matches = 0;
-    my $begin_time = time();
-    my $matches = $fn->();
-    my $duration = time() - $begin_time;
-    printf("%-15s\t%0.2fs\tM=%d\n",
-              $title, $duration, $matches);
-}
 
+my $cycle_print = $Cycles;
+
+foreach my $cycle (0..$Cycles) {
+    if($Cycles) {
+        print "Cycle: $cycle\n";
+    }
+    foreach (@fn_maps) {
+        my ($enabled,$title,$fn) = @$_;
+        if(!$enabled) {
+            printf("%-15s SKIP\n", $title);
+            next;
+        }
+        $matches = 0;
+        my $begin_time = time();
+        my $matches = $fn->();
+        my $duration = time() - $begin_time;
+        printf("%-15s\t%0.2fs\tM=%d\n",
+                  $title, $duration, $matches);
+    }
+}
 1;

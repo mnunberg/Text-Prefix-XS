@@ -6,7 +6,7 @@ use warnings;
 our ($VERSION, @ISA);
 
 BEGIN {
- $VERSION = '0.11';
+ $VERSION = '0.15';
  require DynaLoader;
  push @ISA, 'DynaLoader';
  __PACKAGE__->bootstrap($VERSION);
@@ -96,8 +96,11 @@ Text::Prefix::XS - Fast prefix searching
 
 =head1 DESCRIPTION
 
-This module implements something of an I<trie> algorithm for matching
-(and extracting) prefixes from text strings.
+This module implements a variety of algorithms to ensure fast prefix matching.
+
+It is particularly high performant with pessimistic matching (when a match is
+unlikely), but is still faster than other methods with optimistic matching (when
+a match is likely).
 
 A common application I had was to pre-filter lots and lots of text for a small
 amount of preset prefixes.
@@ -114,11 +117,6 @@ to change
 
 Create an opaque prefix search handle. It returns a thingy, which you should
 keep around.
-
-Internally it will order the elements in the list, with the longest prefix
-being first.
-
-It will then construct a search trie using a variety of caching and lookup layers.
 
 Each prefix must be no longer than 256 I<bytes>. For normal ASCII strings, this
 should be the number of characters - but does not hold true for encodings like
@@ -256,13 +254,13 @@ Using a single function call to L</prefix_search_multi>
     
     Generated INPUT=2000000 TERMS=49 TERM_MIN=2 TERM_MAX=16
     CAP   NAME       DUR	MATCH
-    [N] TMFA       	1.17s	M=339003
-    [N] perl-re    	1.30s	M=339003
-    [N] RE2        	0.93s	M=339003
-    [Y] perl-re    	1.65s	M=339003
-    [Y] RE2        	5.10s	M=339003
-    [Y] TXS        	1.74s	M=339003
-    [Y] TXS-Multi  	1.51s	M=339003
+    [N] TMFA       	1.18s	M=241799
+    [N] perl-re    	1.44s	M=241799
+    [N] RE2        	1.01s	M=241799
+    [Y] perl-re    	1.77s	M=241799
+    [Y] RE2        	4.94s	M=241799
+    [Y] TXS        	1.47s	M=241799
+    [Y] TXS-Multi  	1.15s	M=241799
 
 
     Generated INPUT=2000000 TERMS=10 TERM_MIN=5 TERM_MAX=10
@@ -333,10 +331,7 @@ L<re::engine::RE2>
 
 =head2 Threads
 
-I get funky messages about unbalanced string tables and missing shared string
-entries when using this object in threads. However, I have not experienced a
-segfault with threads, and L<threads> says that weird messages are normal. Still
-a work in process.
+As of version 0.15, threads are fully supported.
 
 =head2 Optimistic Matching
 

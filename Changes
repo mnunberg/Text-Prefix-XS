@@ -1,4 +1,9 @@
 Revision history for Text-Prefix-XS
+0.15    Dec 27 2011
+        Enhanced overall performance by using custom hash impl.
+        This also means no more nasty thread warnings, as there's 
+        no need to keep an HV* around.
+
 0.11    Dec 25 2011
         Free memory for extra hash
         Fixed indentation for XS code

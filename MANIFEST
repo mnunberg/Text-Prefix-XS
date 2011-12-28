@@ -16,3 +16,4 @@ trie.pl
 test.pl
 
 XS.xs
+txs_hash.h
