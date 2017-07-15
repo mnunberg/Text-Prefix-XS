@@ -21,6 +21,18 @@ WriteMakefile(
         'Digest::SHA1' => 1,
         'Test::Deep'=> 0.108,
     },
+    META_MERGE => {
+        'meta-spec' => {
+            version => 2,
+        },
+        resources => {
+            repository => {
+                type => 'git',
+                url => 'git@github.com:mnunberg/Text-Prefix-XS.git',
+                web => 'https://github.com/mnunberg/Text-Prefix-XS.git',
+            },
+        },
+    },
     #LIBS                => ['-lprofiler'],
     OPTIMIZE            => '-O3 -ggdb3',
     dist                => { COMPRESS => 'gzip -9f', SUFFIX => 'gz', },
